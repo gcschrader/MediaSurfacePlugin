@@ -35,7 +35,9 @@ public:
 	// Must be called with a current OpenGL context
 	void			Update();
 
+
 private:
+	GLuint			BuildScreenVignetteTexture () const;
 	JNIEnv * 		jni;
 	SurfaceTexture	* AndroidSurfaceTexture;
 	GlProgram		CopyMovieProgram;
@@ -48,6 +50,7 @@ private:
 	int				BoundWidth;
 	int				BoundHeight;
 	GLuint			Fbo;
+	GLuint			ScreenVignetteTexture;
 };
 
 }	// namespace OVR

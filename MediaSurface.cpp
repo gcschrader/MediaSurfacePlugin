@@ -28,7 +28,8 @@ MediaSurface::MediaSurface() :
 	TexIdHeight( -1 ),
 	BoundWidth( -1 ),
 	BoundHeight( -1 ),
-	Fbo( 0 )
+	Fbo( 0 ),
+    ScreenVignetteTexture( 0 )
 {
 }
 
@@ -41,6 +42,7 @@ void MediaSurface::Init( JNIEnv * jni_ )
 	LastSurfaceTexNanoTimeStamp = 0;
 	TexId = 0;
 	Fbo = 0;
+	ScreenVignetteTexture = BuildScreenVignetteTexture();
 
 	// Setup a surface for playing movies in Unity
 	AndroidSurfaceTexture = new SurfaceTexture( jni );
@@ -76,6 +78,7 @@ void MediaSurface::Init( JNIEnv * jni_ )
 
 	// The class is also a localRef that we can delete
 	jni->DeleteLocalRef( surfaceClass );
+	
 }
 
 void MediaSurface::Shutdown()
@@ -102,6 +105,12 @@ void MediaSurface::Shutdown()
 			SurfaceObject = NULL;
 		}
 	}
+	
+	if ( ScreenVignetteTexture != 0 )
+	{
+		glDeleteTextures( 1, & ScreenVignetteTexture );
+		ScreenVignetteTexture = 0;
+	}
 }
 
 jobject MediaSurface::Bind( int const toTexId, int const width, int const height )
@@ -116,6 +125,41 @@ jobject MediaSurface::Bind( int const toTexId, int const width, int const height
 	BoundWidth = width;
 	BoundHeight = height;
 	return SurfaceObject;
+}
+
+GLuint MediaSurface::BuildScreenVignetteTexture() const
+{
+	// make it an even border at 16:9 aspect ratio, let it get a little squished at other aspects
+	static const int scale = 6;
+    static const int width = 16 * scale;
+    static const int height = 9 * scale;
+    static const int block = 4;
+	  
+    unsigned char buffer[width * height * block];
+    memset( buffer, 255, sizeof( buffer ) );
+    
+    for (int i = 0; i < width; i++){
+        buffer[((i + 1) * block) - 1] = 0;
+        buffer[(width * height * block) - (i * block) - 1] = 0;
+    }
+    
+    for (int i = 1; i < height; i++){
+        buffer[(i * width * block) + block - 1] = 0;
+        buffer[(i * width * block) - 1] = 0;
+    }
+    
+	GLuint vtexId;
+	glGenTextures( 1, &vtexId );
+	glBindTexture( GL_TEXTURE_2D, vtexId );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, buffer );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+
+	GL_CheckErrors( "screenVignette" );
+	return vtexId;
 }
 
 void MediaSurface::Update()
@@ -146,7 +190,7 @@ void MediaSurface::Update()
 	if ( UnitSquare.vertexArrayObject == 0 )
 	{
 		LOG( "Allocating GL objects" );
-
+ 
 		UnitSquare = BuildTesselatedQuad( 1, 1 );
 
 		CopyMovieProgram = BuildProgram(
@@ -162,18 +206,24 @@ void MediaSurface::Update()
 		,
 			"#extension GL_OES_EGL_image_external : require\n"
 			"uniform samplerExternalOES Texture0;\n"
+			"uniform sampler2D Texture2;\n"				// edge vignette
 			"varying highp vec2 oTexCoord;\n"
 			"void main()\n"
 			"{\n"
-			"	gl_FragColor = texture2D( Texture0, oTexCoord );\n"
+			"	gl_FragColor = texture2D( Texture0, oTexCoord ) *  texture2D( Texture2, oTexCoord );\n"
 			"}\n"
 		);
 	}
+
+	glActiveTexture( GL_TEXTURE2 );
+	glBindTexture( GL_TEXTURE_2D, ScreenVignetteTexture );
 
 	// If the SurfaceTexture has changed dimensions, we need to
 	// reallocate the texture and FBO.
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_EXTERNAL_OES, AndroidSurfaceTexture->GetTextureId() );
+	
+
 	if ( TexIdWidth != BoundWidth || TexIdHeight != BoundHeight )
 	{
 		LOG( "New surface size: %ix%i", BoundWidth, BoundHeight );
